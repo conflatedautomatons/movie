@@ -209,7 +209,7 @@ class WikiRunner:
 		self.wikiDir = wikiDir
 		parser = OptionParser()
 		parser.add_option("-r","--reload",help="Reload  from full wiki source",action="store_true",dest="reload")
-		parser.add_option("-e","--expr",help="Reload  from full wiki source",action="append",dest="expr")
+		parser.add_option("-e","--expr",help="Search film subset for intersection of expressions in expression list. Like grep, multiple -e options are ok.",action="append",dest="expr")
 		(self.options,self.args) = parser.parse_args()
 
 	def main(self):
