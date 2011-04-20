@@ -142,7 +142,7 @@ class WikiFilmHandler(ContentHandler):
 		self.exprFound = 0
 		self.inMatchingLine = 0
 		self.inTitle = 0
-
+		self.movieRE = re.compile('Category:')
 
 
 	def startElement(self,name,attrs):
@@ -181,7 +181,13 @@ class WikiFilmHandler(ContentHandler):
 		if (self.inTitle):
 			self.ctTitle = content
 		if (self.inMatchingLine):
-			self.ctFilm = MovieEntry(self.ctTitle,0)
+			year = 0
+			try:
+				year = int(self.movieRE.split(content)[1].split(' ')[0])
+			except:
+				print "Failed to parse year from " + repr(content)
+			self.ctFilm = MovieEntry(self.ctTitle,year)
+			
 				
 
 
