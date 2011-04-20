@@ -1,158 +1,227 @@
 #
-# Download, search corpus of wikipedia movie titles and articles
-# 
-# If you're planning to do anything more serious than this with the 
-# wonderful wikipedia corpus, a much better approach is to download the whole
-# site from http://meta.wikimedia.org/wiki/Data_dumps, eg 
-# http://dumps.wikimedia.org/enwiki/20110115/. This can even include full
-# revision history. It's only about 700 Gb for all article content.
+# Build and search film database, sourced from en:wikipedia.
 #
-# If you are trying to write a wikibot that edits, you should check out
-# http://sourceforge.net/projects/pywikipediabot/
+# The wonderful wikipedia corpus was obtained from 
+# http://meta.wikimedia.org/wiki/Data_dumps, eg
+# http://dumps.wikimedia.org/enwiki/20110115/.
 #
 
-import codecs
+from xml.sax import make_parser, handler
+from xml.sax.handler import ContentHandler
+from xml.sax import saxutils
+from optparse import OptionParser
 import os
 import os.path
-import string
+import re
+import codecs
+import time
 import sys
-import urllib
-import urllib2
-from HTMLParser import HTMLParser
 
-
-wikiBaseUrl = "http://en.wikipedia.org/wiki/Category:"
-wikiMainUrl = "http://en.wikipedia.org"
-# eg http://en.wikipedia.org/wiki/Category:2008_films
-
-# We only need to do this because we are ignoring the corpus, see above
-headers = {}
-headers['User-Agent'] = 'Mozilla/5.0 (Windows; U; Windows NT 5.1; en-GB; rv:1.8.0.4) Gecko/20060508 Firefox/1.5.0.4'
 
 dataDir = "data"
 
 class MovieEntry:
-	def __init__(self,title,url):
+	def __init__(self,title,year):
 		self.title = title
-		self.url = url
-
-
-class FilmCorpusDownloader:
-	def __init__(self,start,end):
-		self.start = start
-		self.end = end
-		self.films = {}
-		for year in range(self.start, self.end+1):
-			self.films[year] = []
-		self.oldUrls = []
-
-	def download(self):
-		for year in range(self.start, self.end+1):
-			self.downloadYear(year)
- 
-	def downloadYear(self,year):
-		yearUrl = wikiBaseUrl + str(year) + "_films"
-		yearFile = os.path.join(dataDir,"film" + str(year))
-		self.downloadPage(yearUrl,yearFile)
-		self.extractIndex(year,yearFile)
-		self.chainDownload(yearFile,2,year)
-
-	def downloadPage(self,url,yearFile):
-		print "downloadPage %s %s " % ( url, yearFile)
-		req = urllib2.Request(url,headers=headers)
-		remoteFile = codecs.getreader("utf-8")(urllib2.urlopen(req))
-		yf = codecs.open(yearFile,'w',"utf-8")
-		yf.write(remoteFile.read())
-		yf.close()
-
-	def extractIndex(self,year,yearFile):
-		flagString = "Pages in category \"" + str(year) + "_films"
-		indexHandler = IndexHandler(self,year)
-		yf = codecs.open(yearFile,'r',"utf-8")
-		indexHandler.feed(yf.read())
-		yf.close()
-
-	def chainDownload(self,yearFile,suffix,year):
-		if not self.nextPageUrl or (self.nextPageUrl in self.oldUrls):
-			return
-		nextFile = yearFile + str(suffix)
-		self.downloadPage(self.nextPageUrl,nextFile)
-		self.oldUrls.append( self.nextPageUrl )
-		self.nextPageUrl = 0
-		self.extractIndex(year,nextFile)
-		self.chainDownload(yearFile,suffix+1,year)
-
-	def scanDownloadedData(self):
-		for f in os.listdir(dataDir):
-			year = int(f[4:8])
-			self.extractIndex(year,os.path.join(dataDir,f))
-
-	def addTitle(self,title,url,year):
-		film = MovieEntry(title,url)
-		self.films[year].append(film)
-
-	def printAll(self):
-		for year in range(self.start,self.end+1):
-			print year
-			for entry in self.films[year]:
-				print entry.title
-
-	def printSummary(self):
-		for year in range(self.start,self.end+1):
-			print "%d: %d" % (year,len(self.films[year]))
-
-	def setNextPage(self,page):
-		self.nextPageUrl = page
-	
-	def searchTitleString(self,s):
-		s1 = string.lower(s)
-		result = []
-		for year in range(self.start,self.end+1):
-			for film in self.films[year]:
-				if string.lower(film.title).find(s1) != -1 :
-					result.append(film)
-		return result
-
-
-class IndexHandler(HTMLParser):
-	def __init__(self,fcd,year):
-		HTMLParser.__init__(self)
-		self.fcd = fcd
 		self.year = year
-		self.titleSection = 2
 
-	def handle_starttag(self,name,attrs):
-		if not self.titleSection: 
-			return
-		if name == "a":
-			title = ""
-			url = ""
-			for attr in attrs:
-				if attr[0] == 'title':
-					title = attr[1]
-				if attr[0] == 'href':
-					url = attr[1]
-			if  (url and title):
-				if (title == "Category:" + str(self.year) + " films"):
-					self.titleSection -= 1
-					self.fcd.setNextPage(wikiMainUrl + url)
-				else:
-					self.fcd.addTitle(title,url,self.year)
+	def __str__(self):
+		return self.title + " -- " + str(self.year)
+
+class WikiDB:
+	def __init__(self,sourceDir):
+		self.sourceDir = sourceDir
+
+	def loadAndSaveSubset(self,expr,outFile):
+		print "load()"
+		try:
+			os.remove(outFile)
+		except :
+			None
+		f = open(outFile,'w')
+		f.write('<mediawiki>\n')
+		f.close()
+		parser = make_parser()
+		for file in os.listdir(self.sourceDir):
+			print "loading " + file
+			parser.setContentHandler(WikiExprSubsetHandler(expr,outFile))
+			parser.parse(os.path.join(self.sourceDir,file))
+		f = open(outFile,'a+')
+		f.write('</mediawiki>')
+		f.close()
+
+	def scanExpr(self,expr):
+		print "scanExpr"
+		parser = make_parser()
+		for file in os.listdir(self.sourceDir):
+			print "loading " + file
+			parser.setContentHandler(WikiFilmHandler(expr))
+			parser.parse(os.path.join(self.sourceDir,file))
 
 
-	def handle_startendtag(self,name,attrs):
-		if name == "a":
-			print attrs
+
+class WikiExprSubsetHandler(ContentHandler):
+	def __init__(self,expr,outFile):
+		self.totalCt = 0
+		self.ct = 0
+		self.expr = expr
+		self.inRevision = 0
+		self.outFile = outFile
+		self.outFileObj = codecs.open(outFile,encoding='utf-8',mode='a+')
+		self.ctContent = ""
+		self.exprFound = 0
+		self.inTitle = 0
+		self.ctTitle = ""
+		self.matchingLine = ""
 
 
+	def startElement(self,name,attrs):
+		if name == "revision":
+			self.totalCt += 1
+			self.inRevision = 1
+			if self.totalCt % 1000 == 0:
+				print "Scanned: %d %s" % (self.totalCt,time.ctime())
+		if name == "title":
+			self.inTitle = 1
 
 
-if __name__== "__main__":
-	fcd = FilmCorpusDownloader(2005,2010)
-	# fcd.download()
-	fcd.scanDownloadedData()
-	fcd.printSummary()
-	for film in fcd.searchTitleString(sys.argv[1]):
-		print film.title
-	
+	def endElement(self,name):
+		if name == "revision":
+			if self.exprFound:
+				self.outFileObj.write('<page>\n')
+				self.outFileObj.write(' <title>')
+				self.outFileObj.write(self.ctTitle)
+				self.outFileObj.write(' </title>\n')
+				self.outFileObj.write(' <matchingline>')
+				self.outFileObj.write(self.matchingLine)
+				self.outFileObj.write(' </matchingline>\n')
+				self.outFileObj.write(' <revision>\n')
+				self.outFileObj.write(saxutils.escape(self.ctContent))
+				self.outFileObj.write('\n')
+				self.outFileObj.write(' </revision>\n' )
+				self.outFileObj.write('</page>\n')
+				self.exprFound = 0
+				self.ct += 1
+			self.inRevision = 0
+			self.ctContent = ""
+			self.ctTitle = ""
+			self.matchingLine = ""
+		if name == "title":
+			self.inTitle = 0
+
+	def characters(self,content):
+		if (self.inRevision):
+			self.ctContent += content
+			if not self.exprFound and re.search(self.expr,content) :
+				self.exprFound = 1
+				self.ct += 1
+				self.matchingLine = content
+				if self.ct % 10 == 0:
+					print "Hits: %d" % self.ct
+		if (self.inTitle):
+			self.ctTitle = content
+
+
+	def endDocument(self):
+		print "end %d " % self.ct
+		print "Hits: %d Scanned: %d" % (self.ct,self.totalCt)
+		self.outFileObj.close()
+
+
+class WikiFilmHandler(ContentHandler):
+	def __init__(self,exprList):
+		self.films = []
+		self.totalCt = 0
+		self.ct = 0
+		self.exprList = []
+		for expr in exprList:
+			self.exprList.append(re.compile(expr,re.IGNORECASE))
+		self.foundExpr = {}
+		self.inRevision = 0
+		self.ctFilm = None
+		self.exprFound = 0
+		self.inMatchingLine = 0
+		self.inTitle = 0
+		self.movieRE = re.compile('Category:')
+
+
+	def startElement(self,name,attrs):
+		if name == "revision":
+			self.totalCt += 1
+			self.inRevision = 1
+			if self.totalCt % 1000 == 0:
+				print "Scanned: %d %s" % (self.totalCt,time.ctime())
+		if name == "matchingline":
+			self.inMatchingLine = 1
+		if name == "title":
+			self.inTitle = 1
+
+	def endElement(self,name):
+		if name == "revision":
+			if self.exprFound:
+				self.exprFound = 0
+				self.films.append(self.ctFilm)
+			self.foundExpr = {}
+			self.inRevision = 0
+		if name == "matchingline":
+			self.inMatchingLine = 0
+		if name == "title":
+			self.inTitle = 0
+
+	def characters(self,content):
+		if (self.inRevision and not self.exprFound):
+			for expr in self.exprList:
+				if not self.exprFound and expr.search(content) :
+					self.foundExpr[expr] = 1
+			if len(self.foundExpr) == len(self.exprList):
+				self.ct += 1
+				self.exprFound = 1
+				if self.ct % 10 == 0:
+					print "Hits: %d" % self.ct
+		if (self.inTitle):
+			self.ctTitle = content
+		if (self.inMatchingLine):
+			year = 0
+			try:
+				year = int(self.movieRE.split(content)[1].split(' ')[0])
+			except:
+				print "Failed to parse year from " + repr(content)
+			self.ctFilm = MovieEntry(self.ctTitle,year)
+			
+				
+
+
+	def endDocument(self):
+		for film in self.films:
+			print film
+		print "end %d " % self.ct
+		print "Hits: %d Scanned: %d" % (self.ct,self.totalCt)
+
+
+# <mediawiki>
+#	<page><revision>...[Category:???? films]</revision>
+#	<page>
+# </mediawiki>
+#
+
+class WikiRunner:
+	def __init__(self,wikiDir):
+		self.wikiDir = wikiDir
+		parser = OptionParser()
+		parser.add_option("-r","--reload",help="Reload  from full wiki source",action="store_true",dest="reload")
+		parser.add_option("-e","--expr",help="Reload  from full wiki source",action="append",dest="expr")
+		(self.options,self.args) = parser.parse_args()
+
+	def main(self):
+		if self.options.reload:
+			wdb = WikiDB(self.wikiDir)
+			wdb.loadAndSaveSubset(r"Category\:[0-9]... films",os.path.join(dataDir,"filmsubset.xml"))
+		if self.options.expr:
+			wdb = WikiDB(dataDir)
+			wdb.scanExpr(self.options.expr)
+
+
+if __name__ == "__main__":
+	WikiRunner("../wikipedia/wikipedia").main()
+
 
