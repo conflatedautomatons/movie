@@ -6,7 +6,6 @@
 # http://dumps.wikimedia.org/enwiki/20110115/.
 #
 
-# from xml.dom.minidom import parse, parseString
 from xml.sax import make_parser, handler
 from xml.sax.handler import ContentHandler
 from xml.sax import saxutils
@@ -20,12 +19,14 @@ import sys
 
 
 dataDir = "data"
-# file = "enwiki-20110115-pages-articles1.xml"
 
 class MovieEntry:
 	def __init__(self,title,year):
 		self.title = title
 		self.year = year
+
+	def __str__(self):
+		return self.title + " -- " + str(self.year)
 
 class WikiDB:
 	def __init__(self,sourceDir):
@@ -45,6 +46,9 @@ class WikiDB:
 			print "loading " + file
 			parser.setContentHandler(WikiExprSubsetHandler(expr,outFile))
 			parser.parse(os.path.join(self.sourceDir,file))
+		f = open(outFile,'a+')
+		f.write('</mediawiki>')
+		f.close()
 
 	def scanExpr(self,expr):
 		print "scanExpr"
@@ -121,7 +125,6 @@ class WikiExprSubsetHandler(ContentHandler):
 	def endDocument(self):
 		print "end %d " % self.ct
 		print "Hits: %d Scanned: %d" % (self.ct,self.totalCt)
-		self.outFileObj.write('</mediawiki>')
 		self.outFileObj.close()
 
 
@@ -130,11 +133,15 @@ class WikiFilmHandler(ContentHandler):
 		self.films = []
 		self.totalCt = 0
 		self.ct = 0
-		self.exprList = exprList
+		self.exprList = []
+		for expr in exprList:
+			self.exprList.append(re.compile(expr,re.IGNORECASE))
 		self.foundExpr = {}
 		self.inRevision = 0
 		self.ctFilm = None
 		self.exprFound = 0
+		self.inMatchingLine = 0
+		self.inTitle = 0
 
 
 
@@ -144,6 +151,10 @@ class WikiFilmHandler(ContentHandler):
 			self.inRevision = 1
 			if self.totalCt % 1000 == 0:
 				print "Scanned: %d %s" % (self.totalCt,time.ctime())
+		if name == "matchingline":
+			self.inMatchingLine = 1
+		if name == "title":
+			self.inTitle = 1
 
 	def endElement(self,name):
 		if name == "revision":
@@ -152,28 +163,31 @@ class WikiFilmHandler(ContentHandler):
 				self.films.append(self.ctFilm)
 			self.foundExpr = {}
 			self.inRevision = 0
-
+		if name == "matchingline":
+			self.inMatchingLine = 0
+		if name == "title":
+			self.inTitle = 0
 
 	def characters(self,content):
-		if (self.inRevision):
-			if re.search(r"\|title.*=",content):
-				print repr(content)
-				title = re.split("title.*=",content)[1]
-				print title
-				self.ctFilm = MovieEntry(title,2010)
+		if (self.inRevision and not self.exprFound):
 			for expr in self.exprList:
-				if not self.exprFound and re.search(expr,content) :
+				if not self.exprFound and expr.search(content) :
 					self.foundExpr[expr] = 1
-			if len(self.foundExpr) == len(expr):
+			if len(self.foundExpr) == len(self.exprList):
 				self.ct += 1
 				self.exprFound = 1
 				if self.ct % 10 == 0:
 					print "Hits: %d" % self.ct
+		if (self.inTitle):
+			self.ctTitle = content
+		if (self.inMatchingLine):
+			self.ctFilm = MovieEntry(self.ctTitle,0)
+				
 
 
 	def endDocument(self):
 		for film in self.films:
-			print film.title
+			print film
 		print "end %d " % self.ct
 		print "Hits: %d Scanned: %d" % (self.ct,self.totalCt)
 
