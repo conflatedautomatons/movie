@@ -64,7 +64,7 @@ class WikiExprSubsetHandler(ContentHandler):
 	def __init__(self,expr,outFile):
 		self.totalCt = 0
 		self.ct = 0
-		self.expr = expr
+		self.expr = re.compile(expr)
 		self.inRevision = 0
 		self.outFile = outFile
 		self.outFileObj = codecs.open(outFile,encoding='utf-8',mode='a+')
@@ -112,7 +112,7 @@ class WikiExprSubsetHandler(ContentHandler):
 	def characters(self,content):
 		if (self.inRevision):
 			self.ctContent += content
-			if not self.exprFound and re.search(self.expr,content) :
+			if not self.exprFound and self.expr.search(content) :
 				self.exprFound = 1
 				self.ct += 1
 				self.matchingLine = content
